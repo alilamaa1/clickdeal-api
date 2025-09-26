@@ -24,16 +24,22 @@ const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.API_KEY || "";
 
 // Shopify
-const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN;             // e.g. clickdeal.site
-const SHOPIFY_ADMIN_TOKEN = process.env.SHOPIFY_ADMIN_TOKEN;               // Admin token
-const SHOPIFY_STOREFRONT_TOKEN = process.env.SHOPIFY_STOREFRONT_TOKEN;     // Storefront token
+// Public storefront/custom domain (e.g. clickdeal.site)
+const SHOPIFY_STORE_DOMAIN = process.env.SHOPIFY_STORE_DOMAIN;
+// **Admin** domain must be your original myshopify.com host
+// (e.g. click-deal-123.myshopify.com). If not set, falls back to STORE_DOMAIN.
+const SHOPIFY_ADMIN_DOMAIN =
+  process.env.SHOPIFY_ADMIN_DOMAIN || SHOPIFY_STORE_DOMAIN;
+
+const SHOPIFY_ADMIN_TOKEN = process.env.SHOPIFY_ADMIN_TOKEN;
+const SHOPIFY_STOREFRONT_TOKEN = process.env.SHOPIFY_STOREFRONT_TOKEN;
 
 // WhatsApp (optional)
 const WA_TOKEN = process.env.WA_TOKEN || "";
 const WA_PHONE_ID = process.env.WA_PHONE_ID || "";
 const WA_RECIPIENTS = (process.env.WA_RECIPIENTS || "")
   .split(",")
-  .map(s => s.trim())
+  .map((s) => s.trim())
   .filter(Boolean);
 
 // ---- Middleware
@@ -58,14 +64,14 @@ app.get("/api/health", (req, res) => {
 
 // ---- Helpers
 async function shopifyAdminGraphQL(query, variables = {}) {
-  const url = `https://${SHOPIFY_STORE_DOMAIN}/admin/api/2024-07/graphql.json`;
+  const url = `https://${SHOPIFY_ADMIN_DOMAIN}/admin/api/2024-07/graphql.json`;
   const resp = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Shopify-Access-Token": SHOPIFY_ADMIN_TOKEN
+      "X-Shopify-Access-Token": SHOPIFY_ADMIN_TOKEN,
     },
-    body: JSON.stringify({ query, variables })
+    body: JSON.stringify({ query, variables }),
   });
   if (!resp.ok) throw new Error(`Shopify Admin error: ${resp.status}`);
   const data = await resp.json();
@@ -79,9 +85,9 @@ async function shopifyStorefrontGraphQL(query, variables = {}) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Shopify-Storefront-Access-Token": SHOPIFY_STOREFRONT_TOKEN
+      "X-Shopify-Storefront-Access-Token": SHOPIFY_STOREFRONT_TOKEN,
     },
-    body: JSON.stringify({ query, variables })
+    body: JSON.stringify({ query, variables }),
   });
   if (!resp.ok) throw new Error(`Shopify Storefront error: ${resp.status}`);
   const data = await resp.json();
@@ -95,14 +101,14 @@ async function shopifyStorefrontGraphQL(query, variables = {}) {
 app.get("/api/products", requireAuth, async (req, res) => {
   try {
     const url =
-      `https://${SHOPIFY_STORE_DOMAIN}` +
+      `https://${SHOPIFY_ADMIN_DOMAIN}` +
       `/admin/api/2024-07/products.json?limit=50&status=active&published_status=published&fields=id,title,handle,variants`;
 
     const r = await fetch(url, {
       headers: {
         "X-Shopify-Access-Token": SHOPIFY_ADMIN_TOKEN,
-        "Content-Type": "application/json"
-      }
+        "Content-Type": "application/json",
+      },
     });
 
     if (!r.ok) {
@@ -111,20 +117,22 @@ app.get("/api/products", requireAuth, async (req, res) => {
     }
 
     const data = await r.json();
-    const products = (data.products || []).map(p => ({
+    const products = (data.products || []).map((p) => ({
       title: p.title,
       handle: p.handle,
-      variants: (p.variants || []).map(v => ({
+      variants: (p.variants || []).map((v) => ({
         id: v.admin_graphql_api_id || String(v.id),
         title: v.title,
         price: v.price,
-        inventory_quantity: v.inventory_quantity
-      }))
+        inventory_quantity: v.inventory_quantity,
+      })),
     }));
 
     res.json({ count: products.length, products });
   } catch (e) {
-    res.status(500).json({ error: "Failed to fetch products", detail: e?.message });
+    res
+      .status(500)
+      .json({ error: "Failed to fetch products", detail: e?.message });
   }
 });
 
@@ -152,7 +160,9 @@ app.get("/api/price/:handle", requireAuth, async (req, res) => {
     const data = await shopifyStorefrontGraphQL(query, { handle });
     const product = data.product;
     if (!product || product.variants.nodes.length === 0) {
-      return res.status(404).json({ error: "Product not found or has no variants" });
+      return res
+        .status(404)
+        .json({ error: "Product not found or has no variants" });
     }
 
     const v = product.variants.nodes[0];
@@ -161,7 +171,7 @@ app.get("/api/price/:handle", requireAuth, async (req, res) => {
       productTitle: product.title,
       variantId: v.id,
       variantTitle: v.title,
-      price: v.price
+      price: v.price,
     });
   } catch (e) {
     res.status(500).json({ error: String(e) });
@@ -194,7 +204,7 @@ app.get("/api/stock/:variantId", requireAuth, async (req, res) => {
     res.json({
       variantId: v.id,
       quantity: v.inventoryQuantity,
-      tracked: v.inventoryItem?.tracked ?? true
+      tracked: v.inventoryItem?.tracked ?? true,
     });
   } catch (e) {
     res.status(500).json({ error: String(e) });
@@ -207,25 +217,45 @@ app.get("/api/stock/:variantId", requireAuth, async (req, res) => {
 // ---------------------------------------------------------------------------
 app.post("/api/orders", requireAuth, async (req, res) => {
   try {
-    const { name, phone, address, city, productHandle, quantity, variantId } = req.body || {};
-    if (!name || !phone || !address || !city || !productHandle || typeof quantity !== "number") {
+    const {
+      name,
+      phone,
+      address,
+      city,
+      productHandle,
+      quantity,
+      variantId,
+    } = req.body || {};
+    if (
+      !name ||
+      !phone ||
+      !address ||
+      !city ||
+      !productHandle ||
+      typeof quantity !== "number"
+    ) {
       return res.status(400).json({ error: "Missing or invalid fields" });
     }
 
     // Get variant (use provided variantId or first variant)
     let chosenVariantId = variantId;
     if (!chosenVariantId) {
-      const data = await shopifyStorefrontGraphQL(`#graphql
+      const data = await shopifyStorefrontGraphQL(
+        `#graphql
         query($handle: String!) {
           product(handle: $handle) {
             title
             variants(first: 1) { nodes { id title price { amount currencyCode } } }
           }
-        }`, { handle: productHandle });
+        }`,
+        { handle: productHandle }
+      );
 
       const product = data.product;
       if (!product || product.variants.nodes.length === 0) {
-        return res.status(404).json({ error: "Product not found or has no variants" });
+        return res
+          .status(404)
+          .json({ error: "Product not found or has no variants" });
       }
       chosenVariantId = product.variants.nodes[0].id;
     }
@@ -246,21 +276,21 @@ app.post("/api/orders", requireAuth, async (req, res) => {
         city,
         firstName: name.split(" ")[0] || name,
         lastName: name.split(" ").slice(1).join(" ") || "Customer",
-        phone
+        phone,
       },
       note: "Created by ClickDeal GPT",
-      tags: ["gpt", "clickdeal-assistant"]
+      tags: ["gpt", "clickdeal-assistant"],
     };
 
     const draftResp = await shopifyAdminGraphQL(mutation, { input });
     const draft = draftResp?.draftOrderCreate?.draftOrder;
     const errors = draftResp?.draftOrderCreate?.userErrors;
-    if (!draft) return res.status(500).json({ error: "Draft order failed", details: errors });
+    if (!draft)
+      return res.status(500).json({ error: "Draft order failed", details: errors });
 
     // WhatsApp notify (best-effort)
     if (WA_TOKEN && WA_PHONE_ID && WA_RECIPIENTS.length > 0) {
-      const text =
-`🛍️ New ClickDeal GPT Order
+      const text = `🛍️ New ClickDeal GPT Order
 Name: ${name}
 Phone: ${phone}
 City: ${city}
@@ -275,14 +305,14 @@ Invoice: ${draft.invoiceUrl}`;
             method: "POST",
             headers: {
               Authorization: `Bearer ${WA_TOKEN}`,
-              "Content-Type": "application/json"
+              "Content-Type": "application/json",
             },
             body: JSON.stringify({
               messaging_product: "whatsapp",
               to,
               type: "text",
-              text: { body: text }
-            })
+              text: { body: text },
+            }),
           });
         } catch (err) {
           console.error("WA send error:", err);
@@ -290,7 +320,9 @@ Invoice: ${draft.invoiceUrl}`;
       }
     }
 
-    res.status(201).json({ ok: true, draftOrderId: draft.id, invoiceUrl: draft.invoiceUrl });
+    res
+      .status(201)
+      .json({ ok: true, draftOrderId: draft.id, invoiceUrl: draft.invoiceUrl });
   } catch (e) {
     res.status(500).json({ error: String(e) });
   }
